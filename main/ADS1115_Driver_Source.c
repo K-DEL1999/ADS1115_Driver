@@ -19,7 +19,7 @@ static void i2c_transmit(unsigned char * data_wr, int data_length);
 static void i2c_receive(unsigned char * data_rd, int data_length);
 
 static void init_ads1115(ADS1115_config_t * cfg){
-    
+        
 }
 
 static void ads1115_get_data(unsigned char * data_rd){
