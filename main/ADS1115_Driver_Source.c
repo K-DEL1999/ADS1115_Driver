@@ -1,12 +1,56 @@
-#include "ADS1115_Driver_Header"
-#include "driver/i2c_master.h"
+#include "ADS1115_Driver_Header.h"
 
-static uint16_t ads1115_meas_config;
+static gpio_num_t _ALERT_PIN;
+
+#if BIG_ENDIAN
+typedef union {
+    struct {
+        // MSB
+        ADS1115_U16_T os  : 1;
+        ADS1115_U16_T mux : 3;
+        ADS1115_U16_T pga : 3;
+        ADS1115_U16_T soc : 1;
+        // LSB 
+        ADS1115_U16_T dr  : 3;
+        ADS1115_U16_T cm  : 1;
+        ADS1115_U16_T cp  : 1;
+        ADS1115_U16_T lc  : 1;
+        ADS1115_U16_T cqd : 2;
+    } bit_fields;
+
+    ADS1115_U16_T reg;
+} config_reg_t;
+#else // LITTLE_ENDIAN
+typedef union {
+    struct { 
+        // LSB 
+        ADS1115_U16_T dr  : 3;
+        ADS1115_U16_T cm  : 1;
+        ADS1115_U16_T cp  : 1;
+        ADS1115_U16_T lc  : 1;
+        ADS1115_U16_T cqd : 2;
+        // MSB
+        ADS1115_U16_T os  : 1;
+        ADS1115_U16_T mux : 3;
+        ADS1115_U16_T pga : 3;
+        ADS1115_U16_T soc : 1;
+    } bit_fields;
+    
+    ADS1115_U16_T reg;
+} config_reg_t;
+#endif
+
+typedef struct {
+    config_reg_t config;
+    ADS1115_U16_T hi_threshold;
+    ADS1115_U16_T lo_threshold;
+} meas_config_t;
+
+static meas_config_t m;
 
 // SINGLE SHOT REQUIRES OS BIT TO BE ENABLED
-
 static void ads1115_write_reg(unsigned char reg, uint16_t data_wr);
-static uint16_t ads1115_read_reg(unsigned char reg);
+static ADS1115_U16_T ads1115_read_reg(unsigned char reg);
 
 // ===================================================================== //
 // ========== I2C function prototypes and variables ==================== //
@@ -15,62 +59,105 @@ static uint16_t ads1115_read_reg(unsigned char reg);
 static i2c_master_dev_handle_t dev_handle;
 
 // prototypes
-static void init_i2c(Device_Address addr);
-static inline void i2c_transmit(unsigned char * data_wr, int data_length);
-static inline void i2c_receive(unsigned char * data_rd, int data_length);
+static void init_i2c(Device_Address addr, ads1115_pins_t * gps);
+static inline void i2c_transmit(unsigned char * data_wr, unsigned int data_length);
+static inline void i2c_receive(unsigned char * data_rd, unsigned int data_length);
 // ===================================================================== //
 // ===================================================================== //
 
-void _init_ads1115(ADS1115_config_t * cfg, Device_Address addr){
-    init_i2c(addr); 
+void _init_ads1115(ADS1115_config_t * cfg, Device_Address addr, ads1115_pins_t * gps){
+    init_i2c(addr, gps); 
 
-    // writing to a local variable is faster than writing to a static variable 
-    uint16_t t_reg = 0x0000;     
-    t_reg |= (cfg->input_mux_config << 12);
-    t_reg |= (cfg->programmable_amplifier_gain << 9);
-    t_reg |= (cfg->single_or_continuous << 8);
-    t_reg |= (cfg->data_rate << 5);
-    t_reg |= (cfg->comparator_mode << 4);
-    t_reg |= (cfg->comparator_polarity << 3);
-    t_reg |= (cfg->latching_comparator << 2);
-    t_reg |= comparator_queue_and_disable;
- 
-    ads1115_meas_config = t_reg;
+    m.config.bit_fields.os = 0x00;    
+    m.config.bit_fields.mux = 0x00;    
+    m.config.bit_fields.pga = cfg->programmable_amplifier_gain;
+    m.config.bit_fields.soc = cfg->single_or_continuous;
+    m.config.bit_fields.dr = cfg->data_rate;
+    m.config.bit_fields.cm = cfg->comparator_mode;
+    m.config.bit_fields.cp = cfg->comparator_polarity;
+    m.config.bit_fields.lc = cfg->latching_comparator;
+    m.config.bit_fields.cqd = cfg->comparator_queue_and_disable;
 
-    ads1115_write_reg(((unsigned char)CONFIG_REG), ads1115_meas_config); 
+    ads1115_write_reg(((unsigned char)CONFIG_REG), m.config.reg);        
+
+    // ===================================================//
+    // ============== Initialize RDY_PIN =================//
+    // ===================================================//
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (_ALERT_PIN = 1ULL << gps->alert_pin);
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+    // ===================================================//
+    // ===================================================//
+
+    // Setting HI and LO THRESHOLD REG values to enable conversion-ready functionality
+    // HI_THRESHOLD_REG must ahve MSB of 1 ---- 0x01XX
+    // LO_THRESHOLD_REG must have MSB of 0 ---- 0x00XX
+    //ads1115_write_reg(HI_THRESHOLD_REG, ((ADS1115_U16_T)0x01 << 8) & 0xFFFF);        
+    //ads1115_write_reg(LO_THRESHOLD_REG, 0x00);
+    ads1115_set_conversion_rdy_thresholds();
 }
        
-uint16_t _ads1115_get_data(Register_Address reg, Input_Mux_Config imc){
-    uint16_t tmp_config = (ads1115_meas_config & 0x0100) ? (ads1115_meas_config | 0x8000) : ads1115_meas_config; 
-    
+ADS1115_U16_T _ads1115_get_data(Register_Address reg, Input_Mux_Config imc){
+    bool single_shot_mode = m.config.bit_fields.soc;
+    ADS1115_U16_T tmp_config = ((single_shot_mode) ? (m.config.reg | 0x8000) : m.config.reg) & 0xFFFF;
+     
     switch(reg){
         case CONVERSION_REG:
+            if (single_shot_mode){
+                tmp_config |= (imc << 12);
+                ads1115_write_reg(CONFIG_REG, tmp_config);
+            }    
+            // Waits for signal indicating that conversion is complete -- ready signal depends on comparator polarity  
+            if (!m.config.bit_fields.cp){
+                while (gpio_get_level(_ALERT_PIN));
+            }
+            else {
+                while (!gpio_get_level(_ALERT_PIN));
+            } 
+            
+            return ads1115_read_reg(CONVERSION_REG);
             break; 
         case CONFIG_REG:
+            return ads1115_read_reg(CONFIG_REG);
             break;
         case LO_THRESHOLD_REG:
+            return ads1115_read_reg(LO_THRESHOLD_REG);
             break;
         case HI_THRESHOLD_REG:
+            return ads1115_read_reg(HI_THRESHOLD_REG);
             break;
     }
+
+    return 0;
+}
+
+void ads1115_set_thresholds(ADS1115_U16_T hi_threshold_val, ADS1115_U16_T lo_threshold_val){
+   if (hi_threshold_val > lo_threshold_val){ 
+        ads1115_write_reg(HI_THRESHOLD_REG, hi_threshold_val & 0xFFFF);        
+        ads1115_write_reg(LO_THRESHOLD_REG, lo_threshold_val & 0xFFFF);       
+    } 
 }
 
 // SIZE is in bytes
 #define WR_BUFFER_SIZE 3
-static void ads1115_write_reg(unsigned char reg, uint16_t data_wr){
+static void ads1115_write_reg(unsigned char reg, ADS1115_U16_T data_wr){
     static unsigned char wr_buffer[WR_BUFFER_SIZE];
     
-    buffer[0] = reg;
-    buffer[1] = ((unsigned char)((data_wr >> 8) & 0xFF));
-    buffer[2] = ((unsigned char)(data_wr & 0xFF));
+    wr_buffer[0] = reg;
+    wr_buffer[1] = ((unsigned char)((data_wr >> 8) & 0xFF));
+    wr_buffer[2] = ((unsigned char)(data_wr & 0xFF));
      
-    i2c_transmit(buffer, WR_BUFFER_SIZE); 
+    i2c_transmit(wr_buffer, WR_BUFFER_SIZE); 
 }
 
 // SIZE is in bytes
 #define ADDRESS_POINTER_REGISTER_SIZE 1
 #define RD_BUFFER_SIZE 2
-static uint16_t ads1115_read_reg(unsigned char reg){
+static ADS1115_U16_T ads1115_read_reg(unsigned char reg){
     static unsigned char rd_buffer[RD_BUFFER_SIZE];
     rd_buffer[0] = reg;
 
@@ -78,15 +165,18 @@ static uint16_t ads1115_read_reg(unsigned char reg){
 
     i2c_receive(rd_buffer, RD_BUFFER_SIZE); 
 
-    return (((uint16_t)rd_buffer[1] << 8) | ((uint16_t)rd_buffer[0]));
+    return ((((ADS1115_U16_T)rd_buffer[1] << 8) & 0xFFFF) | (((ADS1115_U16_T)rd_buffer[0]) & 0xFFFF));
 }
 
-static void init_i2c(Device_Address addr){
+// ===================================================================== //
+// ================= I2C function defintions =========================== //
+// ===================================================================== //
+static void init_i2c(Device_Address addr, ads1115_pins_t * gps){
     i2c_master_bus_config_t i2c_mst_config = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = I2C_PORT_NUM_0,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_io_num = I2C_MASTER_SDA_IO,
+        .i2c_port = gps->i2c_port,
+        .scl_io_num = gps->i2c_master_scl,
+        .sda_io_num = gps->i2c_master_sda,
         .glitch_ignore_cnt = 7,
     };
 
