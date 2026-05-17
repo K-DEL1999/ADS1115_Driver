@@ -11,6 +11,23 @@ static void init_adc(void);
 void app_main(void){
     init_adc();    
 
+    /*
+        TO DO: 
+            SMbus Alert Response for the COMP_LAT --- SECTION 7.3.9 of datasheet
+            If HI threshold and LO threshold are provided HI must be greater than LO
+            - window mode : alert is asserted when reading falls below LO or exceeds HI
+            - traditional : alert is asserted when reading exceeds HI
+           
+            ======= SECTION 7.3.7 of datasheet ========= 
+ 
+            COMP_LAT -- if enabled ALERT remains asserted until SMBus alert response or reading of CONVERSION_REG
+                     -- otherwise if window it remains asserted until input signal is inbetween HI and LO
+                     -- otherwise if traditional it remains asserted until signal falls below LO
+
+            COMP_QUE determines how many readings to wait for before asserting the ALRT pin and also disables 
+                comparator function
+    */
+
     while (1){
     
     }
