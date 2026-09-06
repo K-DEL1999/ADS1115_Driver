@@ -96,14 +96,10 @@ ADS1115_U16_T _ads1115_get_data(Register_Address reg, Input_Mux_Config imc){
             }    
             // Waits for signal indicating that conversion is complete -- ready signal depends on comparator polarity  
             if (!m.config.bit_fields.cp){
-                //printf("Waiting for Alert Pin to go LOW\n");
                 while (gpio_get_level(_ALERT_PIN));
-                //printf("Alert Pin LOW\n");
             }
             else {
-                //printf("Waiting for Alert Pin to go HIGH\n");
                 while (!gpio_get_level(_ALERT_PIN));
-                //printf("Alert Pin HIGH\n");
             } 
             
             return ads1115_read_reg(CONVERSION_REG);
@@ -127,7 +123,6 @@ void ads1115_set_thresholds(ADS1115_U16_T hi_threshold_val, ADS1115_U16_T lo_thr
         ads1115_write_reg(HI_THRESHOLD_REG, hi_threshold_val & 0xFFFF);        
         ads1115_write_reg(LO_THRESHOLD_REG, lo_threshold_val & 0xFFFF);       
     }
-    //printf("High_TH = %X, Low_TH = %X\n", ads1115_get_hi_threshold_val(), ads1115_get_lo_threshold_val()); 
 }
 
 // SIZE is in bytes
