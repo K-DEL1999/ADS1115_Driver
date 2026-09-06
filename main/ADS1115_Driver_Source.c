@@ -2,43 +2,27 @@
 
 static gpio_num_t _ALERT_PIN;
 
-#if BIG_ENDIAN
+/*
+    The unions maps the bit fields from the struct to the register member starting right to left.
+    So to achieve the desired order of bits shown below, bit fields must be defined from lsb to msb.
+
+    (MSb) os:15 mux:14-12 pga:11-9 soc:8 dr:7-5 cm:4 cp:3 lc:2 cqd:1-0 (LSb)   
+*/
 typedef union {
     struct {
-        // MSB
-        ADS1115_U16_T os  : 1;
-        ADS1115_U16_T mux : 3;
-        ADS1115_U16_T pga : 3;
-        ADS1115_U16_T soc : 1;
-        // LSB 
-        ADS1115_U16_T dr  : 3;
-        ADS1115_U16_T cm  : 1;
-        ADS1115_U16_T cp  : 1;
-        ADS1115_U16_T lc  : 1;
-        ADS1115_U16_T cqd : 2;
+        unsigned int cqd : 2;
+        unsigned int lc  : 1;
+        unsigned int cp  : 1;
+        unsigned int cm  : 1;
+        unsigned int dr  : 3;
+        unsigned int soc : 1;
+        unsigned int pga : 3;
+        unsigned int mux : 3;
+        unsigned int os  : 1;
     } bit_fields;
 
     ADS1115_U16_T reg;
 } config_reg_t;
-#else // LITTLE_ENDIAN
-typedef union {
-    struct { 
-        // LSB 
-        ADS1115_U16_T dr  : 3;
-        ADS1115_U16_T cm  : 1;
-        ADS1115_U16_T cp  : 1;
-        ADS1115_U16_T lc  : 1;
-        ADS1115_U16_T cqd : 2;
-        // MSB
-        ADS1115_U16_T os  : 1;
-        ADS1115_U16_T mux : 3;
-        ADS1115_U16_T pga : 3;
-        ADS1115_U16_T soc : 1;
-    } bit_fields;
-    
-    ADS1115_U16_T reg;
-} config_reg_t;
-#endif
 
 typedef struct {
     config_reg_t config;
@@ -68,6 +52,20 @@ static inline void i2c_receive(unsigned char * data_rd, unsigned int data_length
 void _init_ads1115(ADS1115_config_t * cfg, Device_Address addr, ads1115_pins_t * gps){
     init_i2c(addr, gps); 
 
+    // ===================================================//
+    // ============ Initialize ALERT_PIN =================//
+    // ===================================================//
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_INPUT_OUTPUT_OD;
+    io_conf.pin_bit_mask = (1ULL << (_ALERT_PIN = gps->alert_pin));
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+    gpio_set_level(_ALERT_PIN, 1);
+    // ===================================================//
+    // ===================================================//
+
     m.config.bit_fields.os = 0x00;    
     m.config.bit_fields.mux = 0x00;    
     m.config.bit_fields.pga = cfg->programmable_amplifier_gain;
@@ -78,32 +76,17 @@ void _init_ads1115(ADS1115_config_t * cfg, Device_Address addr, ads1115_pins_t *
     m.config.bit_fields.lc = cfg->latching_comparator;
     m.config.bit_fields.cqd = cfg->comparator_queue_and_disable;
 
-    ads1115_write_reg(((unsigned char)CONFIG_REG), m.config.reg);        
-
-    // ===================================================//
-    // ============== Initialize RDY_PIN =================//
-    // ===================================================//
-    gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = (_ALERT_PIN = 1ULL << gps->alert_pin);
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
-    gpio_config(&io_conf);
-    // ===================================================//
-    // ===================================================//
-
     // Setting HI and LO THRESHOLD REG values to enable conversion-ready functionality
-    // HI_THRESHOLD_REG must ahve MSB of 1 ---- 0x01XX
+    // HI_THRESHOLD_REG must have MSB of 1 ---- 0x01XX
     // LO_THRESHOLD_REG must have MSB of 0 ---- 0x00XX
     //ads1115_write_reg(HI_THRESHOLD_REG, ((ADS1115_U16_T)0x01 << 8) & 0xFFFF);        
     //ads1115_write_reg(LO_THRESHOLD_REG, 0x00);
-    ads1115_set_conversion_rdy_thresholds();
+    ads1115_set_conversion_rdy_pin();
 }
        
 ADS1115_U16_T _ads1115_get_data(Register_Address reg, Input_Mux_Config imc){
-    bool single_shot_mode = m.config.bit_fields.soc;
-    ADS1115_U16_T tmp_config = ((single_shot_mode) ? (m.config.reg | 0x8000) : m.config.reg) & 0xFFFF;
+    unsigned int single_shot_mode = m.config.bit_fields.soc;
+    ADS1115_U16_T tmp_config = ((single_shot_mode) ? (m.config.reg | 0x8000) : (m.config.reg & 0x7FFF)) & 0xFFFF;
      
     switch(reg){
         case CONVERSION_REG:
@@ -113,10 +96,14 @@ ADS1115_U16_T _ads1115_get_data(Register_Address reg, Input_Mux_Config imc){
             }    
             // Waits for signal indicating that conversion is complete -- ready signal depends on comparator polarity  
             if (!m.config.bit_fields.cp){
+                //printf("Waiting for Alert Pin to go LOW\n");
                 while (gpio_get_level(_ALERT_PIN));
+                //printf("Alert Pin LOW\n");
             }
             else {
+                //printf("Waiting for Alert Pin to go HIGH\n");
                 while (!gpio_get_level(_ALERT_PIN));
+                //printf("Alert Pin HIGH\n");
             } 
             
             return ads1115_read_reg(CONVERSION_REG);
@@ -136,21 +123,22 @@ ADS1115_U16_T _ads1115_get_data(Register_Address reg, Input_Mux_Config imc){
 }
 
 void ads1115_set_thresholds(ADS1115_U16_T hi_threshold_val, ADS1115_U16_T lo_threshold_val){
-   if (hi_threshold_val > lo_threshold_val){ 
+    if (hi_threshold_val > lo_threshold_val){ 
         ads1115_write_reg(HI_THRESHOLD_REG, hi_threshold_val & 0xFFFF);        
         ads1115_write_reg(LO_THRESHOLD_REG, lo_threshold_val & 0xFFFF);       
-    } 
+    }
+    //printf("High_TH = %X, Low_TH = %X\n", ads1115_get_hi_threshold_val(), ads1115_get_lo_threshold_val()); 
 }
 
 // SIZE is in bytes
 #define WR_BUFFER_SIZE 3
 static void ads1115_write_reg(unsigned char reg, ADS1115_U16_T data_wr){
-    static unsigned char wr_buffer[WR_BUFFER_SIZE];
+    unsigned char wr_buffer[WR_BUFFER_SIZE];
     
     wr_buffer[0] = reg;
     wr_buffer[1] = ((unsigned char)((data_wr >> 8) & 0xFF));
     wr_buffer[2] = ((unsigned char)(data_wr & 0xFF));
-     
+    
     i2c_transmit(wr_buffer, WR_BUFFER_SIZE); 
 }
 
@@ -158,14 +146,14 @@ static void ads1115_write_reg(unsigned char reg, ADS1115_U16_T data_wr){
 #define ADDRESS_POINTER_REGISTER_SIZE 1
 #define RD_BUFFER_SIZE 2
 static ADS1115_U16_T ads1115_read_reg(unsigned char reg){
-    static unsigned char rd_buffer[RD_BUFFER_SIZE];
+    unsigned char rd_buffer[RD_BUFFER_SIZE];
     rd_buffer[0] = reg;
 
     i2c_transmit(rd_buffer, ADDRESS_POINTER_REGISTER_SIZE);
 
     i2c_receive(rd_buffer, RD_BUFFER_SIZE); 
 
-    return ((((ADS1115_U16_T)rd_buffer[1] << 8) & 0xFFFF) | (((ADS1115_U16_T)rd_buffer[0]) & 0xFFFF));
+    return ((((ADS1115_U16_T)rd_buffer[0] << 8) & 0xFFFF) | (((ADS1115_U16_T)rd_buffer[1]) & 0xFFFF));
 }
 
 // ===================================================================== //
@@ -177,7 +165,6 @@ static void init_i2c(Device_Address addr, ads1115_pins_t * gps){
         .i2c_port = gps->i2c_port,
         .scl_io_num = gps->i2c_master_scl,
         .sda_io_num = gps->i2c_master_sda,
-        .glitch_ignore_cnt = 7,
     };
 
     i2c_master_bus_handle_t bus_handle;

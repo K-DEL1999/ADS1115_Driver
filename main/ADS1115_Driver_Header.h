@@ -5,8 +5,6 @@
 #include "driver/gpio.h"
 #include <stdint.h>
 
-#define BIG_ENDIAN 1 // otherwise 0 for little endian
-
 typedef struct {
     gpio_num_t alert_pin;
     i2c_port_num_t i2c_port;
@@ -61,7 +59,7 @@ typedef enum  {
     gets voltage difference of a line to GND whereas differential gets the voltage
     difference between 2 lines. In differential AIN_P and AIN_N have the same magnitude
     but different polarity - meaning they are complements of eachother (same signal
-    refelcted over horizontal axis).
+    reflected over horizontal axis).
 */
 typedef enum {
     MUX_CONFIG_0, // AIN_P = AIN0 = A0 and AIN_N = AIN1 = A1 (default)
@@ -90,6 +88,19 @@ typedef uint16_t ADS1115_U16_T;
 #define init_ads1115_scl_address(CFG, GPS)   _init_ads1115(CFG, ADDRESS_SCL, GPS)
 void _init_ads1115(ADS1115_config_t * cfg, Device_Address addr, ads1115_pins_t * gps);
 
+// ============================================================================================= //
+// The imc parameter can be any value when reading registers other than the conversion registers //
+// ==============================================================================================//
+// read CONFIG_REG
+#define ads1115_get_config_val() _ads1115_get_data(CONFIG_REG, MUX_CONFIG_0)
+
+// read LO_THRESHOLD
+#define ads1115_get_lo_threshold_val() _ads1115_get_data(LO_THRESHOLD_REG, MUX_CONFIG_0) 
+
+// read HI_THRESHOLD
+#define ads1115_get_hi_threshold_val() _ads1115_get_data(HI_THRESHOLD_REG, MUX_CONFIG_0)
+// =========================================================================================== //
+
 // get differential signal outputs
 #define ads1115_get_differential_A0_A1() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_0) 
 #define ads1115_get_differential_A0_A3() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_1) 
@@ -97,12 +108,26 @@ void _init_ads1115(ADS1115_config_t * cfg, Device_Address addr, ads1115_pins_t *
 #define ads1115_get_differential_A2_A3() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_3) 
  
 // get single-ended signal outputs
+// read from A0
 #define ads1115_get_adc_val1() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_4) 
+// read from A1
 #define ads1115_get_adc_val2() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_5) 
+// read from A2
 #define ads1115_get_adc_val3() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_6) 
-#define ads1115_get_adc_val4() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_7) 
+// read from A3
+#define ads1115_get_adc_val4() _ads1115_get_data(CONVERSION_REG, MUX_CONFIG_7)
+
+// read from A0 and convert to voltage
+#define ads1115_get_voltage_adc1() 6.144*(double)(_ads1115_get_data(CONVERSION_REG, MUX_CONFIG_4))/32768
+// read from A1 and convert to voltage
+#define ads1115_get_voltage_adc2() 6.144*(double)(_ads1115_get_data(CONVERSION_REG, MUX_CONFIG_5))/32768
+// read from A2 and convert to voltage
+#define ads1115_get_voltage_adc3() 6.144*(double)(_ads1115_get_data(CONVERSION_REG, MUX_CONFIG_6))/32768
+// read from A3 and convert to voltage
+#define ads1115_get_voltage_adc4() 6.144*(double)(_ads1115_get_data(CONVERSION_REG, MUX_CONFIG_7))/32768
+  
 ADS1115_U16_T _ads1115_get_data(Register_Address reg, Input_Mux_Config imc);
 
-#define ads1115_set_conversion_rdy_thresholds() ads1115_set_thresholds((((ADS1115_U16_T)0x01 << 8) & 0xFFFF), 0x00)
+#define ads1115_set_conversion_rdy_pin() ads1115_set_thresholds(((ADS1115_U16_T)0x8000), 0x0000)
 void ads1115_set_thresholds(ADS1115_U16_T hi_threshold_val, ADS1115_U16_T lo_threshold_val);
 #endif /* ADS1115_DRIVER_HEADER_H */

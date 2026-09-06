@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "ADS1115_Driver",
-    "project_version":    "c189bdc-dirty",
+    "project_version":    "d9a988b-dirty",
     "project_path":       "/home/kbuntu/ESP32/ADS1115_Driver",
     "idf_path":           "/home/kbuntu/ESP32/esp-idf",
     "build_dir":          "/home/kbuntu/ESP32/ADS1115_Driver/build",

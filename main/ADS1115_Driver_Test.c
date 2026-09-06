@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include "ADS1115_Driver_Header.h"
 
-#define ALERT_PIN 17
 #define I2C_PORT 0  
-#define SCL 18
-#define SDA 19
+#define SCL 22
+#define SDA 21
+#define ALERT_PIN 19 
 
 static void init_adc(void);
 
@@ -29,7 +29,11 @@ void app_main(void){
     */
 
     while (1){
-    
+        double val1 = ads1115_get_voltage_adc1();
+        double val2 = ads1115_get_voltage_adc2();
+        double val3 = ads1115_get_voltage_adc3();
+        double val4 = ads1115_get_voltage_adc4();
+        printf("adc1 = %.4f adc2 = %.4f adc3 = %.4f adc4 = %.4f \n", val1, val2, val3, val4); 
     }
 }
 
@@ -46,7 +50,7 @@ static void init_adc(void){
         .single_or_continuous = 0x01,
         .data_rate = 0x00,
         .comparator_mode = 0x00,
-        .comparator_polarity = 0x00,
+        .comparator_polarity = 0x01, // Asserts HIGH at the end of a conversion if bit is set to 1b - Meaning ALERT is HIGH when conversion complete
         .latching_comparator = 0x00,
         .comparator_queue_and_disable = 0x00   
     };
